@@ -1,5 +1,4 @@
 import logging
-import ssl
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -7,42 +6,22 @@ import os
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
+
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-DATABASE_PATH = os.getenv("DATABASE_PATH")
-ENDPOINT = os.getenv("ENDPOINT")
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG for detailed logs
 
 # Инициализация бота и диспетчера
 bot = Bot(token=TELEGRAM_TOKEN)
-dp = Dispatcher()  # Updated for non-deprecated initialization
+dp = Dispatcher()
 
-try:
-    # Открываем файл
-    with open('c:/work/arendator/data.json', 'r', encoding='utf-8') as file:
-        data = json.load(file)
-
-    # Проверяем ключ
-    if 'sections' not in data:
-        raise KeyError("Ключ 'sections' отсутствует в данных.")
-
-    # Используем sections
-    sections = data['sections']
-    print(sections)
-
-except FileNotFoundError:
-    print("Файл не найден. Проверьте путь.")
-except json.JSONDecodeError:
-    print("Ошибка при разборе JSON. Проверьте содержимое файла.")
-except KeyError as e:
-    print(f"Ошибка: {e}")
-except Exception as e:
-    print(f"Неизвестная ошибка: {e}")
-
+# Загружаем данные из JSON
+with open('c:/work/arendator/data.json', 'r', encoding='utf-8') as file:
+    data = json.load(file)
 
 sections = data['sections']
 subsections = data['subsections']
