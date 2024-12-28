@@ -4,35 +4,50 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
+import json
 from openai import OpenAI
+from dotenv import load_dotenv
+load_dotenv()
 
-OPENAI_API_KEY = "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"
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+DATABASE_PATH = os.getenv("DATABASE_PATH")
+ENDPOINT = os.getenv("ENDPOINT")
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)  # Change to DEBUG for detailed logs
 
-# Переменные окружения
-TELEGRAM_TOKEN = "801854876:AAGIq_Zd_bKObkezZt9bxq9JBLId0bSYmDY"
-DATABASE_PATH = "/ru-central1/b1gm7qip4sdep322r0b3/etn55fsfav32krmaaqk4"
-ENDPOINT = "grpcs://ydb.serverless.yandexcloud.net:2135/"
-OPENAI_API_KEY = "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"
-
-# Установка API-ключа OpenAI
 # Инициализация бота и диспетчера
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()  # Updated for non-deprecated initialization
 
-# Ключевые слова и разделы с ID
-sections = {
-    "ДТП": {"id": 1, "keywords": ["виноват", "авария", "столкновение"]},
-    "Долг": {"id": 2, "keywords": ["долг", "баланс", "списание", "лишняя сумма"]},
-    "Неисправность": {"id": 3, "keywords": ["масло", "колодки", "резина", "сломалось"]},
-    "Техосмотр": {"id": 4, "keywords": ["день", "техосмотр", "пройти", "назначенный день"]},
-    "Другая проблема": {"id": 5, "keywords": ["проблема", "вопрос"]},
-    "Оператор": {"id": 6, "keywords": ["оператор", "помощь", "связаться"]}
-}
+try:
+    # Открываем файл
+    with open('c:/work/arendator/data.json', 'r', encoding='utf-8') as file:
+        data = json.load(file)
 
-# Генерация клавиатуры для выбора города
+    # Проверяем ключ
+    if 'sections' not in data:
+        raise KeyError("Ключ 'sections' отсутствует в данных.")
+
+    # Используем sections
+    sections = data['sections']
+    print(sections)
+
+except FileNotFoundError:
+    print("Файл не найден. Проверьте путь.")
+except json.JSONDecodeError:
+    print("Ошибка при разборе JSON. Проверьте содержимое файла.")
+except KeyError as e:
+    print(f"Ошибка: {e}")
+except Exception as e:
+    print(f"Неизвестная ошибка: {e}")
+
+
+sections = data['sections']
+subsections = data['subsections']
+prompt_template = data['prompt_template']
+
 cities = [
     "Санкт-Петербург", "Реутов", "Воронеж", "Волгоград", "Краснодар", "Ростов-на-Дону", "Нижний Новгород"
 ]
@@ -40,7 +55,6 @@ city_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text=city, callback_data=f"city_{city}")] for city in cities]
 )
 
-# Генерация клавиатуры для выбора проблемы
 problem_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text=name, callback_data=f"problem_{details['id']}") for name, details in list(sections.items())[:2]],
@@ -49,34 +63,66 @@ problem_keyboard = InlineKeyboardMarkup(
     ]
 )
 
+user_data = {}
+
 @dp.message(lambda message: message.text == '/start')
 async def send_welcome(message: types.Message):
     logging.debug("Handling /start command")
     await message.answer(
-        "Пожалуйста, укажите ваш город из списка:",
+        "Выберите ваш город:",
         reply_markup=city_keyboard
     )
 
 @dp.callback_query(lambda callback: callback.data.startswith("city_"))
 async def handle_city_selection(callback_query: types.CallbackQuery):
-    city = callback_query.data[len("city_"):]  # Extract city name from callback data
+    city = callback_query.data[len("city_"):]  # Extract city name
+    user_data[callback_query.from_user.id] = {"city": city}
     logging.debug(f"City selected: {city}")
-    await callback_query.message.answer(f"Ваш город: {city}.\n\nОпишите проблему:", reply_markup=problem_keyboard)
+    await callback_query.message.answer(
+        f"Вы выбрали город: {city}. Теперь выберите раздел, который соответствует вашей проблеме:",
+        reply_markup=problem_keyboard
+    )
     await callback_query.answer()
 
 @dp.callback_query(lambda callback: callback.data.startswith("problem_"))
 async def handle_problem_selection(callback_query: types.CallbackQuery):
     problem_id = int(callback_query.data[len("problem_"):])
     logging.debug(f"Problem ID selected: {problem_id}")
+    selected_section = None
+
     for section, details in sections.items():
         if details['id'] == problem_id:
-            if problem_id in [5, 6]:  # "Другая проблема" or "Оператор"
-                await callback_query.message.answer("Сообщите вашу проблему.")
-            elif problem_id == 1:  # "ДТП"
-                await callback_query.message.answer("Кто виноват в ДТП?")
-            else:
-                await callback_query.message.answer(f"Вы выбрали раздел: {section}")
+            selected_section = section
+            user_data[callback_query.from_user.id]["section"] = section
+            await callback_query.message.answer(details["content"])
+
+            # Display relevant subsections as buttons if available
+            relevant_subsections = [name for name, sub in subsections.items() if sub["parent_id"] == problem_id]
+            if relevant_subsections:
+                subsection_keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text=sub, callback_data=f"subsection_{sub}")]
+                                     for sub in relevant_subsections]
+                )
+                await callback_query.message.answer("Выберите нужный подраздел:", reply_markup=subsection_keyboard)
             break
+
+    if not selected_section:
+        await callback_query.message.answer("Произошла ошибка при выборе раздела. Попробуйте снова.")
+    
+    await callback_query.answer()
+
+@dp.callback_query(lambda callback: callback.data.startswith("subsection_"))
+async def handle_subsection_selection(callback_query: types.CallbackQuery):
+    subsection_name = callback_query.data[len("subsection_"):]  # Extract subsection name
+    logging.debug(f"Subsection selected: {subsection_name}")
+
+    if subsection_name in subsections:
+        city = user_data.get(callback_query.from_user.id, {}).get("city", "указанном городе")
+        content = subsections[subsection_name]["content"].format(city=city)
+        await callback_query.message.answer(content)
+    else:
+        await callback_query.message.answer("Произошла ошибка при выборе подраздела. Попробуйте снова.")
+
     await callback_query.answer()
 
 @dp.message()
@@ -84,38 +130,58 @@ async def handle_user_message(message: types.Message):
     user_message = message.text.lower()
     logging.debug(f"Received user message: {user_message}")
 
-    # Формируем контекст для OpenAI с разделами
-    sections_context = "\n".join([f"{name}: {', '.join(details['keywords'])}" for name, details in sections.items()])
+    # Попытка определения раздела локально
+    determined_section = None
+    for section, details in sections.items():
+        if any(keyword in user_message for keyword in details["keywords"]):
+            determined_section = section
+            break
 
-    # Формируем системное сообщение для OpenAI
-    system_message = (
-        "Вы бот, который помогает определить, к какому разделу относится сообщение пользователя. "
-        "Возможные разделы и их ключевые слова:\n"
-        f"{sections_context}\n"
-        "На основании сообщения пользователя определите, какой раздел подходит лучше всего. "
-        "Верните только название раздела."
-    )
+    if determined_section:
+        logging.debug(f"Local section determination: {determined_section}")
+        await message.answer(f"Определён раздел по ключевым словам: {determined_section}")
+        await message.answer(sections[determined_section]["content"])
 
-    try:
-        # Создаем запрос к OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        response = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_message},  # Инструкция для модели
-                {"role": "user", "content": user_message},  # Сообщение пользователя
-            ],
-            model="gpt-4o-mini",
-        )
+        # Display relevant subsections as buttons if available
+        problem_id = sections[determined_section]["id"]
+        relevant_subsections = [name for name, sub in subsections.items() if sub["parent_id"] == problem_id]
+        if relevant_subsections:
+            subsection_keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text=sub, callback_data=f"subsection_{sub}")]
+                                 for sub in relevant_subsections]
+            )
+            await message.answer("Выберите нужный подраздел:", reply_markup=subsection_keyboard)
+    else:
+        # Если раздел не определён, запрос к OpenAI
+        try:
+            client = OpenAI(api_key=OPENAI_API_KEY)
+            prompt = prompt_template.format(
+                sections="\n".join([f"{section}: {', '.join(details['keywords'])}" for section, details in sections.items()]),
+                user_message=user_message
+            )
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model="gpt-4o-mini",
+            )
 
-        # Извлекаем текст ответа
-        response_text = response.choices[0].message.content.strip()  # Ответ модели
+            response_text = response.choices[0].message.content.strip()
+            await message.answer(f"ChatGPT определил раздел: {response_text}")
 
-        # Отправляем ответ пользователю
-        await message.answer(f"Ваше сообщение относится к разделу: {response_text}")
+            if response_text in sections:
+                await message.answer(sections[response_text]["content"])
 
-    except Exception as e:
-        logging.error(f"Error analyzing message: {e}")
-        await message.answer("Произошла ошибка при анализе сообщения. Попробуйте снова позже.")
+                # Display relevant subsections as buttons if available
+                problem_id = sections[response_text]["id"]
+                relevant_subsections = [name for name, sub in subsections.items() if sub["parent_id"] == problem_id]
+                if relevant_subsections:
+                    subsection_keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text=sub, callback_data=f"subsection_{sub}")]
+                                         for sub in relevant_subsections]
+                    )
+                    await message.answer("Выберите нужный подраздел:", reply_markup=subsection_keyboard)
+        except Exception as e:
+            logging.error(f"Error analyzing message: {e}")
+            await message.answer("Произошла ошибка при анализе сообщения. Попробуйте снова позже.")
 
 async def main():
     logging.info("Starting bot polling...")
@@ -131,7 +197,6 @@ if __name__ == '__main__':
         if not asyncio.get_event_loop().is_running():
             asyncio.run(main())
         else:
-            # If an event loop is already running, use it to run the bot
             loop = asyncio.get_event_loop()
             loop.create_task(main())
     except Exception as e:
